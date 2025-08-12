@@ -46,24 +46,14 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Configure Terraform Backend
-        working-directory: ./tf
-        run: |
-          cat > backend.tf <<EOF
-          terraform {
-            backend "s3" {
-              bucket         = "${{ secrets.DEV_TF_STATE_BUCKET }}"
-              key            = "dev/terraform.tfstate"
-              region         = "${{ secrets.DEV_AWS_REGION }}"
-              dynamodb_table = "${{ secrets.DEV_TF_STATE_DYNAMODB_TABLE }}"
-              encrypt        = true
-            }
-          }
-          EOF
-
       - name: Terraform Init
         working-directory: ./tf
-        run: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.DEV_TF_STATE_BUCKET }}" \
+            -backend-config="key=dev/terraform.tfstate" \
+            -backend-config="region=${{ secrets.DEV_AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.DEV_TF_STATE_DYNAMODB_TABLE }}"
 
       - name: Terraform Validate
         working-directory: ./tf
