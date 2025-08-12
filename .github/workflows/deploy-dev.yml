@@ -1,0 +1,95 @@
+name: Deploy to Dev
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_VERSION: "1.5.0"
+
+jobs:
+  deploy:
+    name: Deploy to Dev Environment
+    runs-on: ubuntu-latest
+    environment: dev
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.DEV_AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.DEV_AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure Terraform Backend
+        run: |
+          cat > backend.tf <<EOF
+          terraform {
+            backend "s3" {
+              bucket         = "${{ secrets.DEV_TF_STATE_BUCKET }}"
+              key            = "dev/terraform.tfstate"
+              region         = "${{ secrets.DEV_AWS_REGION }}"
+              dynamodb_table = "${{ secrets.DEV_TF_STATE_DYNAMODB_TABLE }}"
+              encrypt        = true
+            }
+          }
+          EOF
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -var-file="dev.tfvars" -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v3
+        with:
+          name: dev-tfplan
+          path: |
+            tfplan
+            plan.txt
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show Outputs
+        run: terraform output -json > outputs.json
+
+      - name: Upload Outputs
+        uses: actions/upload-artifact@v3
+        with:
+          name: dev-outputs
+          path: outputs.json
+
+      - name: Post Deployment Summary
+        run: |
+          echo "## 🚀 Deployment to Dev Environment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: Dev" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ secrets.DEV_AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Terraform Outputs" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+          cat outputs.json >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,39 @@
+# Terraform files
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+.terraform/
+.terraform.lock.hcl
+backend.tf
+
+# AWS credentials
+.aws/
+*.pem
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Output files
+github_oidc_outputs.json
+trust-policy.json
+policy.json
+outputs.json
+plan.txt
