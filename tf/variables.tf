@@ -51,3 +51,28 @@ variable "ssh_allowed_ips" {
   type        = list(string)
   default     = ["0.0.0.0/0"] # WARNING: Open to world by default, restrict in production
 }
+
+# S3 Variables
+variable "s3_versioning_enabled" {
+  description = "Enable versioning for S3 bucket"
+  type        = bool
+  default     = true
+}
+
+variable "s3_lifecycle_enabled" {
+  description = "Enable lifecycle policy for S3 bucket"
+  type        = bool
+  default     = false
+}
+
+variable "s3_lifecycle_expiration_days" {
+  description = "Number of days after which objects expire"
+  type        = number
+  default     = 90
+}
+
+variable "s3_lifecycle_noncurrent_days" {
+  description = "Number of days after which noncurrent versions expire"
+  type        = number
+  default     = 30
+}

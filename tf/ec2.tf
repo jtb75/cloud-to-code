@@ -80,10 +80,11 @@ resource "aws_key_pair" "ec2_key" {
 
 # EC2 Instance
 resource "aws_instance" "main" {
-  ami           = data.aws_ami.amazon_linux_2.id
-  instance_type = var.instance_type
-  key_name      = aws_key_pair.ec2_key.key_name
-  subnet_id     = aws_subnet.public.id
+  ami                  = data.aws_ami.amazon_linux_2.id
+  instance_type        = var.instance_type
+  key_name             = aws_key_pair.ec2_key.key_name
+  subnet_id            = aws_subnet.public.id
+  iam_instance_profile = aws_iam_instance_profile.ec2.name
 
   vpc_security_group_ids = [aws_security_group.ec2.id]
 
@@ -103,12 +104,19 @@ resource "aws_instance" "main" {
   user_data = <<-EOF
     #!/bin/bash
     yum update -y
-    yum install -y httpd
+    yum install -y httpd aws-cli
     systemctl start httpd
     systemctl enable httpd
+    
+    # Create web page
     echo "<h1>Hello from ${var.environment} environment!</h1>" > /var/www/html/index.html
     echo "<p>Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>" >> /var/www/html/index.html
     echo "<p>Availability Zone: $(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)</p>" >> /var/www/html/index.html
+    echo "<p>S3 Bucket: ${aws_s3_bucket.main.id}</p>" >> /var/www/html/index.html
+    
+    # Test S3 access
+    echo "Testing S3 access to bucket: ${aws_s3_bucket.main.id}" > /tmp/test.txt
+    aws s3 cp /tmp/test.txt s3://${aws_s3_bucket.main.id}/test/instance-test.txt --region ${var.aws_region}
   EOF
 
   tags = merge(
