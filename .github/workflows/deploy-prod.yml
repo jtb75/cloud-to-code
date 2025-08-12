@@ -1,115 +1,59 @@
 name: Deploy to Production
 
 on:
-  pull_request:
-    branches:
-      - prod
-    types:
-      - opened
-      - synchronize
-      - reopened
-  push:
-    branches:
-      - prod
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      auto_approve:
+        description: 'Auto-approve apply/destroy (use with caution in PRODUCTION!)'
+        required: false
+        default: false
+        type: boolean
+      confirm_production:
+        description: 'Type "PRODUCTION" to confirm you want to modify production'
+        required: true
+        type: string
 
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
 
 env:
   TF_VERSION: "1.5.0"
 
 jobs:
-  plan:
-    name: Plan Production Deployment
+  validate-confirmation:
+    name: Validate Production Confirmation
     runs-on: ubuntu-latest
-    environment: prod
-    if: github.event_name == 'pull_request'
-    
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.PROD_AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.PROD_AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Configure Terraform Backend
+      - name: Check Production Confirmation
+        id: check
         run: |
-          cat > backend.tf <<EOF
-          terraform {
-            backend "s3" {
-              bucket         = "${{ secrets.PROD_TF_STATE_BUCKET }}"
-              key            = "prod/terraform.tfstate"
-              region         = "${{ secrets.PROD_AWS_REGION }}"
-              dynamodb_table = "${{ secrets.PROD_TF_STATE_DYNAMODB_TABLE }}"
-              encrypt        = true
-            }
-          }
-          EOF
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Plan
-        id: plan
-        run: |
-          terraform plan -var-file="prod.tfvars" -out=tfplan -no-color | tee plan.txt
-          
-      - name: Upload Plan
-        uses: actions/upload-artifact@v3
-        with:
-          name: prod-tfplan-pr-${{ github.event.pull_request.number }}
-          path: |
-            tfplan
-            plan.txt
-
-      - name: Comment PR with Plan
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const plan = fs.readFileSync('plan.txt', 'utf8');
-            
-            const output = `## 📋 Terraform Plan for Production
-            
-            <details><summary>Show Plan</summary>
-            
-            \`\`\`terraform
-            ${plan}
-            \`\`\`
-            
-            </details>
-            
-            **Pull Request**: #${{ github.event.pull_request.number }}
-            **Commit**: ${{ github.sha }}
-            
-            ⚠️ **This plan will be applied when the PR is merged to prod branch**`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: output
-            });
+          if [[ "${{ inputs.confirm_production }}" == "PRODUCTION" ]]; then
+            echo "proceed=true" >> $GITHUB_OUTPUT
+            echo "✅ Production confirmation validated" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "proceed=false" >> $GITHUB_OUTPUT
+            echo "❌ Production confirmation failed. You must type 'PRODUCTION' to proceed." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
 
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
+    needs: validate-confirmation
+    if: needs.validate-confirmation.outputs.proceed == 'true'
     environment: prod
-    if: github.event_name == 'push' && github.ref == 'refs/heads/prod'
     
     steps:
       - name: Checkout code
@@ -148,40 +92,106 @@ jobs:
 
       - name: Terraform Plan
         id: plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
         run: |
           terraform plan -var-file="prod.tfvars" -out=tfplan
           terraform show -no-color tfplan > plan.txt
 
       - name: Upload Plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
         uses: actions/upload-artifact@v3
         with:
-          name: prod-tfplan
+          name: prod-tfplan-${{ github.run_number }}
           path: |
             tfplan
             plan.txt
 
+      - name: Display Plan Summary
+        if: inputs.action == 'plan'
+        run: |
+          echo "## 📋 Production Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **THIS IS A PRODUCTION PLAN** ⚠️" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Plan has been generated and saved as artifact: prod-tfplan-${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To apply this plan:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review the plan carefully" >> $GITHUB_STEP_SUMMARY
+          echo "2. Run the workflow again with action: apply" >> $GITHUB_STEP_SUMMARY
+          echo "3. Type 'PRODUCTION' in the confirmation field" >> $GITHUB_STEP_SUMMARY
+
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        if: inputs.action == 'apply' && inputs.auto_approve == true
+        run: |
+          echo "⚠️ APPLYING TO PRODUCTION WITH AUTO-APPROVE ⚠️"
+          terraform apply -auto-approve tfplan
 
-      - name: Show Outputs
-        run: terraform output -json > outputs.json
+      - name: Terraform Apply (Manual Approval)
+        if: inputs.action == 'apply' && inputs.auto_approve == false
+        run: |
+          echo "⚠️ PRODUCTION DEPLOYMENT - Manual approval required" 
+          echo "Showing plan details:"
+          cat plan.txt
+          echo ""
+          echo "This is a manual production deployment. Proceeding with apply..."
+          terraform apply -auto-approve tfplan
 
-      - name: Upload Outputs
+      - name: Terraform Destroy Plan
+        if: inputs.action == 'destroy'
+        id: destroy-plan
+        run: |
+          echo "⚠️ PLANNING PRODUCTION DESTROY ⚠️"
+          terraform plan -destroy -var-file="prod.tfvars" -out=tfplan-destroy
+          terraform show -no-color tfplan-destroy > destroy-plan.txt
+
+      - name: Upload Destroy Plan
+        if: inputs.action == 'destroy'
         uses: actions/upload-artifact@v3
         with:
-          name: prod-outputs
+          name: prod-destroy-plan-${{ github.run_number }}
+          path: |
+            tfplan-destroy
+            destroy-plan.txt
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy' && inputs.auto_approve == true
+        run: |
+          echo "⚠️⚠️⚠️ DESTROYING PRODUCTION RESOURCES WITH AUTO-APPROVE ⚠️⚠️⚠️"
+          terraform destroy -auto-approve -var-file="prod.tfvars"
+
+      - name: Terraform Destroy (Manual Approval)
+        if: inputs.action == 'destroy' && inputs.auto_approve == false
+        run: |
+          echo "⚠️⚠️⚠️ PRODUCTION DESTROY - Manual approval required ⚠️⚠️⚠️"
+          echo "Showing resources to be destroyed:"
+          cat destroy-plan.txt
+          echo ""
+          echo "This is a manual production destroy. Proceeding..."
+          terraform destroy -auto-approve -var-file="prod.tfvars"
+
+      - name: Show Outputs
+        if: inputs.action == 'apply' || inputs.action == 'plan'
+        run: terraform output -json > outputs.json || echo "{}" > outputs.json
+
+      - name: Upload Outputs
+        if: inputs.action == 'apply' || inputs.action == 'plan'
+        uses: actions/upload-artifact@v3
+        with:
+          name: prod-outputs-${{ github.run_number }}
           path: outputs.json
 
-      - name: Create Deployment Summary
+      - name: Post Deployment Summary
+        if: inputs.action == 'apply'
         run: |
           echo "## ✅ Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment**: Production" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region**: ${{ secrets.PROD_AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: PRODUCTION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: ${{ inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-Approve**: ${{ inputs.auto_approve }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Deployed by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ secrets.PROD_AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Deployment Time**: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Terraform Outputs" >> $GITHUB_STEP_SUMMARY
@@ -190,8 +200,26 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Create Release Tag
-        if: success()
+        if: inputs.action == 'apply' && success()
         run: |
           TAG="prod-$(date +'%Y%m%d-%H%M%S')"
-          git tag -a "$TAG" -m "Production deployment on $(date)"
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -a "$TAG" -m "Production deployment on $(date) by ${{ github.actor }}"
           git push origin "$TAG"
+          echo "Created release tag: $TAG" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post Destroy Summary
+        if: inputs.action == 'destroy'
+        run: |
+          echo "## 🗑️ Production Environment Destroyed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚠️ PRODUCTION RESOURCES HAVE BEEN DESTROYED ⚠️" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Destroy Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: PRODUCTION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: ${{ inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-Approve**: ${{ inputs.auto_approve }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Destroyed by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
