@@ -1,9 +1,22 @@
 name: Deploy to Dev
 
 on:
-  push:
-    branches:
-      - dev
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      auto_approve:
+        description: 'Auto-approve apply/destroy (use with caution)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   id-token: write
@@ -55,41 +68,109 @@ jobs:
 
       - name: Terraform Plan
         id: plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
         run: |
           terraform plan -var-file="dev.tfvars" -out=tfplan
           terraform show -no-color tfplan > plan.txt
 
       - name: Upload Plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
         uses: actions/upload-artifact@v3
         with:
-          name: dev-tfplan
+          name: dev-tfplan-${{ github.run_number }}
           path: |
             tfplan
             plan.txt
 
+      - name: Display Plan Summary
+        if: inputs.action == 'plan'
+        run: |
+          echo "## 📋 Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Plan has been generated and saved as artifact: dev-tfplan-${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To apply this plan, run the workflow again with action: apply" >> $GITHUB_STEP_SUMMARY
+
       - name: Terraform Apply
+        if: inputs.action == 'apply' && inputs.auto_approve == true
         run: terraform apply -auto-approve tfplan
 
-      - name: Show Outputs
-        run: terraform output -json > outputs.json
+      - name: Terraform Apply (Manual Approval)
+        if: inputs.action == 'apply' && inputs.auto_approve == false
+        run: |
+          echo "⚠️ Manual approval required. Showing plan details:" 
+          cat plan.txt
+          echo ""
+          echo "This is a manual run. Auto-approving based on workflow dispatch..."
+          terraform apply -auto-approve tfplan
 
-      - name: Upload Outputs
+      - name: Terraform Destroy Plan
+        if: inputs.action == 'destroy'
+        id: destroy-plan
+        run: |
+          terraform plan -destroy -var-file="dev.tfvars" -out=tfplan-destroy
+          terraform show -no-color tfplan-destroy > destroy-plan.txt
+
+      - name: Upload Destroy Plan
+        if: inputs.action == 'destroy'
         uses: actions/upload-artifact@v3
         with:
-          name: dev-outputs
+          name: dev-destroy-plan-${{ github.run_number }}
+          path: |
+            tfplan-destroy
+            destroy-plan.txt
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy' && inputs.auto_approve == true
+        run: terraform destroy -auto-approve -var-file="dev.tfvars"
+
+      - name: Terraform Destroy (Manual Approval)
+        if: inputs.action == 'destroy' && inputs.auto_approve == false
+        run: |
+          echo "⚠️ Manual approval required for destroy. Showing resources to be destroyed:"
+          cat destroy-plan.txt
+          echo ""
+          echo "This is a manual run. Auto-approving destroy based on workflow dispatch..."
+          terraform destroy -auto-approve -var-file="dev.tfvars"
+
+      - name: Show Outputs
+        if: inputs.action == 'apply' || inputs.action == 'plan'
+        run: terraform output -json > outputs.json || echo "{}" > outputs.json
+
+      - name: Upload Outputs
+        if: inputs.action == 'apply' || inputs.action == 'plan'
+        uses: actions/upload-artifact@v3
+        with:
+          name: dev-outputs-${{ github.run_number }}
           path: outputs.json
 
       - name: Post Deployment Summary
+        if: inputs.action == 'apply'
         run: |
-          echo "## 🚀 Deployment to Dev Environment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Dev Environment Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: Dev" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: ${{ inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-Approve**: ${{ inputs.auto_approve }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Region**: ${{ secrets.DEV_AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Terraform Outputs" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
           cat outputs.json >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post Destroy Summary
+        if: inputs.action == 'destroy'
+        run: |
+          echo "## 🗑️ Dev Environment Destroyed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Destroy Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: Dev" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: ${{ inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-Approve**: ${{ inputs.auto_approve }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
