@@ -71,6 +71,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Configure Terraform Backend
+        working-directory: ./tf
         run: |
           cat > backend.tf <<EOF
           terraform {
@@ -85,14 +86,17 @@ jobs:
           EOF
 
       - name: Terraform Init
+        working-directory: ./tf
         run: terraform init
 
       - name: Terraform Validate
+        working-directory: ./tf
         run: terraform validate
 
       - name: Terraform Plan
         id: plan
         if: inputs.action == 'plan' || inputs.action == 'apply'
+        working-directory: ./tf
         run: |
           terraform plan -var-file="prod.tfvars" -out=tfplan
           terraform show -no-color tfplan > plan.txt
@@ -103,8 +107,8 @@ jobs:
         with:
           name: prod-tfplan-${{ github.run_number }}
           path: |
-            tfplan
-            plan.txt
+            tf/tfplan
+            tf/plan.txt
 
       - name: Display Plan Summary
         if: inputs.action == 'plan'
@@ -122,12 +126,14 @@ jobs:
 
       - name: Terraform Apply
         if: inputs.action == 'apply' && inputs.auto_approve == true
+        working-directory: ./tf
         run: |
           echo "⚠️ APPLYING TO PRODUCTION WITH AUTO-APPROVE ⚠️"
           terraform apply -auto-approve tfplan
 
       - name: Terraform Apply (Manual Approval)
         if: inputs.action == 'apply' && inputs.auto_approve == false
+        working-directory: ./tf
         run: |
           echo "⚠️ PRODUCTION DEPLOYMENT - Manual approval required" 
           echo "Showing plan details:"
@@ -139,6 +145,7 @@ jobs:
       - name: Terraform Destroy Plan
         if: inputs.action == 'destroy'
         id: destroy-plan
+        working-directory: ./tf
         run: |
           echo "⚠️ PLANNING PRODUCTION DESTROY ⚠️"
           terraform plan -destroy -var-file="prod.tfvars" -out=tfplan-destroy
@@ -150,17 +157,19 @@ jobs:
         with:
           name: prod-destroy-plan-${{ github.run_number }}
           path: |
-            tfplan-destroy
-            destroy-plan.txt
+            tf/tfplan-destroy
+            tf/destroy-plan.txt
 
       - name: Terraform Destroy
         if: inputs.action == 'destroy' && inputs.auto_approve == true
+        working-directory: ./tf
         run: |
           echo "⚠️⚠️⚠️ DESTROYING PRODUCTION RESOURCES WITH AUTO-APPROVE ⚠️⚠️⚠️"
           terraform destroy -auto-approve -var-file="prod.tfvars"
 
       - name: Terraform Destroy (Manual Approval)
         if: inputs.action == 'destroy' && inputs.auto_approve == false
+        working-directory: ./tf
         run: |
           echo "⚠️⚠️⚠️ PRODUCTION DESTROY - Manual approval required ⚠️⚠️⚠️"
           echo "Showing resources to be destroyed:"
@@ -171,6 +180,7 @@ jobs:
 
       - name: Show Outputs
         if: inputs.action == 'apply' || inputs.action == 'plan'
+        working-directory: ./tf
         run: terraform output -json > outputs.json || echo "{}" > outputs.json
 
       - name: Upload Outputs
@@ -178,7 +188,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: prod-outputs-${{ github.run_number }}
-          path: outputs.json
+          path: tf/outputs.json
 
       - name: Post Deployment Summary
         if: inputs.action == 'apply'
@@ -196,7 +206,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Terraform Outputs" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-          cat outputs.json >> $GITHUB_STEP_SUMMARY
+          cat tf/outputs.json >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Create Release Tag
