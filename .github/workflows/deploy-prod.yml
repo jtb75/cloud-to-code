@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload Plan
         if: inputs.action == 'plan' || inputs.action == 'apply'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: prod-tfplan-${{ github.run_number }}
           path: |
@@ -146,7 +146,7 @@ jobs:
 
       - name: Upload Destroy Plan
         if: inputs.action == 'destroy'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: prod-destroy-plan-${{ github.run_number }}
           path: |
@@ -175,7 +175,7 @@ jobs:
 
       - name: Upload Outputs
         if: inputs.action == 'apply' || inputs.action == 'plan'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: prod-outputs-${{ github.run_number }}
           path: outputs.json
