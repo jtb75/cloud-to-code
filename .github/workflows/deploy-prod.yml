@@ -24,7 +24,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write  # Need write permission to create and push tags
 
 env:
   TF_VERSION: "1.5.0"
