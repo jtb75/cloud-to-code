@@ -1,0 +1,6 @@
+terraform:
+  dynamicBackends:
+    dev:
+      bucket: "automation-state-7719628"
+    prod:
+      bucket: "automation-state-7787138"
