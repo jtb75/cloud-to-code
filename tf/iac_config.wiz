@@ -2,5 +2,7 @@ terraform:
   dynamicBackends:
     dev:
       bucket: "automation-state-7719628"
+      region: "us-east-2"
     prod:
       bucket: "automation-state-7787138"
+      region: "us-east-2"
