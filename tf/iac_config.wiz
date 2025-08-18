@@ -3,6 +3,8 @@ terraform:
     dev:
       bucket: "automation-state-7719628"
       region: "us-east-2"
+      key:    "/dev/terraform.tfstate"
     prod:
       bucket: "automation-state-7787138"
       region: "us-east-2"
+      key:    "/prod/terraform.tfstate"
